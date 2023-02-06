@@ -290,37 +290,37 @@ class Trainer():
 
     return
 
-  @numba.jit(nopython=True, parallel=True)
-  def new_cloud_bonnetal2(self, points, labels, above_gnd):
-      lidar_data = points[:, :2]  # neglecting the z co-ordinate
-      # print(lidar_data.shape)
-      height_data = points[:, 2] #+ 1.732
-      # points2 = np.zeros((points.shape[0],4), dtype=np.float32) - 1e10
-      # print(grid_size.shape)
-      # print(np.array([grid_size[0], grid_size[1]]).shape)
-      # lidar_data -= grid_sub
-      # lidar_data = lidar_data /voxel_size # multiplying by the resolution
-      # lidar_data = np.floor(lidar_data)
-      # lidar_data = lidar_data.astype(np.int32)
-      N = lidar_data.shape[0] # Total number of points
-      # pts2 = [np.reshape(np.zeros((1,4), dtype=np.float32)[0,:],(1,4))]
-      pts2 = []
-      for i in range(N):
-          # x = lidar_data[i,0]
-          # y = lidar_data[i,1]
-          # z = height_data[i]
-          # if (0 < x < elevation_map.shape[0]) and (0 < y < elevation_map.shape[1]):
-          #     if z > elevation_map[x,y] + threshold:
-          #         # points2 = np.vstack((points2,np.reshape(points[i,:],(1,4))))
-          #         pts2.append(np.reshape(points[i,:],(1,4)))
-          #         # points2[i,:] = points[i,:]
-          if labels[i] in above_gnd:
-            pts2.append(np.reshape(points[i,:],(1,4)))
-      # points2 = points2[points2[:,0] != -1e10]
-      # return points2
-      return pts2
+  # @numba.jit(nopython=True, parallel=True)
+  # def new_cloud_bonnetal2(self, points, labels, above_gnd):
+  #     lidar_data = points[:, :2]  # neglecting the z co-ordinate
+  #     # print(lidar_data.shape)
+  #     height_data = points[:, 2] #+ 1.732
+  #     # points2 = np.zeros((points.shape[0],4), dtype=np.float32) - 1e10
+  #     # print(grid_size.shape)
+  #     # print(np.array([grid_size[0], grid_size[1]]).shape)
+  #     # lidar_data -= grid_sub
+  #     # lidar_data = lidar_data /voxel_size # multiplying by the resolution
+  #     # lidar_data = np.floor(lidar_data)
+  #     # lidar_data = lidar_data.astype(np.int32)
+  #     N = lidar_data.shape[0] # Total number of points
+  #     # pts2 = [np.reshape(np.zeros((1,4), dtype=np.float32)[0,:],(1,4))]
+  #     pts2 = []
+  #     for i in range(N):
+  #         # x = lidar_data[i,0]
+  #         # y = lidar_data[i,1]
+  #         # z = height_data[i]
+  #         # if (0 < x < elevation_map.shape[0]) and (0 < y < elevation_map.shape[1]):
+  #         #     if z > elevation_map[x,y] + threshold:
+  #         #         # points2 = np.vstack((points2,np.reshape(points[i,:],(1,4))))
+  #         #         pts2.append(np.reshape(points[i,:],(1,4)))
+  #         #         # points2[i,:] = points[i,:]
+  #         if labels[i] in above_gnd:
+  #           pts2.append(np.reshape(points[i,:],(1,4)))
+  #     # points2 = points2[points2[:,0] != -1e10]
+  #     # return points2
+  #     return pts2
 
-  @numba.jit(nopython=True)#, parallel=True, cache=True)
+  @numba.jit(nopython=True, parallel=True, cache=True)
   def new_cloud_bonnetal(self, points, labels, above_gnd: np.array):
     lidar_data = points[:, :2]  # neglecting the z co-ordinate
     height_data = points[:, 2] #+ 1.732
