@@ -26,6 +26,29 @@ from common.warmupLR import *
 from tasks.semantic.modules.segmentator import *
 from tasks.semantic.modules.ioueval import *
 
+# @numba.jit(nopython=True, parallel=True, cache=True)
+def new_cloud_bonnetal(points, labels, above_gnd: np.array):
+  lidar_data = points[:, :2]  # neglecting the z co-ordinate
+  height_data = points[:, 2] #+ 1.732
+  points2 = np.zeros((points.shape[0],4), dtype=np.float32) - 1
+  # lidar_data -= grid_sub
+  # lidar_data = lidar_data /voxel_size # multiplying by the resolution
+  # lidar_data = np.floor(lidar_data)
+  # lidar_data = lidar_data.astype(np.int32)
+  # above_gnd = np.array([44, 48, 50, 51, 70, 71, 80, 81])
+  N = lidar_data.shape[0] # Total number of points
+  for i in numba.prange(N):
+    # x = lidar_data[i,0]
+    # y = lidar_data[i,1]
+    # z = height_data[i]
+    # if (0 < x < elevation_map.shape[0]) and (0 < y < elevation_map.shape[1]):
+    #     if z > elevation_map[x,y] + threshold:
+    #         points2[i,:] = points[i,:]
+    if labels[i] in above_gnd:
+      points2[i,:] = points[i,:]
+  points2 = points2[points2[:,0] != -1]
+  return points2
+
 
 class Trainer():
   def __init__(self, ARCH, DATA, datadir, logdir, path=None):
@@ -320,29 +343,6 @@ class Trainer():
   #     # return points2
   #     return pts2
 
-  @numba.jit(nopython=True, parallel=True, cache=True)
-  def new_cloud_bonnetal(self, points, labels, above_gnd: np.array):
-    lidar_data = points[:, :2]  # neglecting the z co-ordinate
-    height_data = points[:, 2] #+ 1.732
-    points2 = np.zeros((points.shape[0],4), dtype=np.float32) - 1
-    # lidar_data -= grid_sub
-    # lidar_data = lidar_data /voxel_size # multiplying by the resolution
-    # lidar_data = np.floor(lidar_data)
-    # lidar_data = lidar_data.astype(np.int32)
-    # above_gnd = np.array([44, 48, 50, 51, 70, 71, 80, 81])
-    N = lidar_data.shape[0] # Total number of points
-    for i in numba.prange(N):
-      # x = lidar_data[i,0]
-      # y = lidar_data[i,1]
-      # z = height_data[i]
-      # if (0 < x < elevation_map.shape[0]) and (0 < y < elevation_map.shape[1]):
-      #     if z > elevation_map[x,y] + threshold:
-      #         points2[i,:] = points[i,:]
-      if labels[i] in above_gnd:
-        points2[i,:] = points[i,:]
-    points2 = points2[points2[:,0] != -1]
-    return points2
-
   def train_epoch(self, train_loader, model, criterion, optimizer, epoch, evaluator, scheduler, color_fn, report=10, show_scans=False):
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -359,7 +359,7 @@ class Trainer():
     model.train()
 
     end = time.time()
-    for i, (in_vol, proj_mask, proj_labels, unproj_labels, path_seq, path_name, p_x, p_y, _, _, _, unproj_xyz, _, unproj_remissions, _) in enumerate(train_loader):
+    for i, (in_vol, proj_mask, proj_labels, unproj_labels, path_seq, path_name, p_x, p_y, _, _, _, unproj_xyz, _, unproj_remissions, npoints) in enumerate(train_loader):
         # measure data loading time
       data_time.update(time.time() - end)
       if not self.multi_gpu and self.gpu:
@@ -370,32 +370,43 @@ class Trainer():
       if self.gpu:
         proj_labels = proj_labels.cuda(non_blocking=True).long()
       
-       
+      p_x = p_x[:, :npoints]
+      p_y = p_y[:, :npoints]
+      unproj_labels = unproj_labels[:, :npoints]
       # compute output
       output = model(in_vol, proj_mask)
-      import sys
-      print("SHAPE: ", output[0].shape)
-      sys.stdout.flush()
-      proj_argmax = output[0].argmax(dim=0)
-      unproj_argmax = proj_argmax[p_y, p_x]
+      # import sys
+      # print("SHAPE: ", output[0].shape)
+      # sys.stdout.flush()
+      # proj_argmax = output[0].argmax(dim=0)
+      # unproj_argmax = proj_argmax[p_y, p_x]
+      # ################## debug for vedang ##################
+      # print(output[0].argmax(dim=0).shape)
+      # proj_argmax = torch.stack([output[k].argmax(dim=0) for k in range(len(output))])
+      # print("proj_argmax: ", proj_argmax.shape)
+      # unproj_argmax = proj_argmax[0][p_y[0], p_x[0]]
+      # print("unproj_argmax: ", unproj_argmax.shape)
+      # ################## debug for vedang ##################
+
+      unproj_argmax = torch.stack([output[k].argmax(dim=0)[p_y[k]][p_x[k]] for k in range(len(output))])
       pred_np = unproj_argmax.cpu().numpy()
 
-      pred_np = pred_np.reshape((-1)).astype(np.int32)
+      pred_np = pred_np.reshape((len(output),-1)).astype(np.int32)
 
       # map to original label
       # print("pred_np: ", pred_np.shape)
       # pred_np = to_orig_fn(pred_np)
       above_gnd_red = np.array([13, 14, 15, 16, 18, 19])
 
-      points = torch.cat([unproj_xyz[:, :len(pred_np), :], unproj_remissions[:, :len(pred_np)].unsqueeze(2)], dim=2).cpu().numpy()
+      points = torch.cat([unproj_xyz[:, :pred_np.shape[1], :], unproj_remissions[:, :pred_np.shape[1]].unsqueeze(2)], dim=2).cpu().numpy()
       # print("points: ", points)
       # print("unproj: ", unproj_labels[0].cpu().numpy().copy())
       # print()
-      true = self.new_cloud_bonnetal(points[0].copy(), unproj_labels[0].cpu().numpy().copy(), above_gnd_red)
-      pred = self.new_cloud_bonnetal(points[0].copy(), pred_np.copy(), above_gnd_red)
+      trues = [new_cloud_bonnetal(points[k].copy(), unproj_labels[k].cpu().numpy().copy(), above_gnd_red) for k in range(len(points))]
+      preds = [new_cloud_bonnetal(points[k].copy(), pred_np[k].copy(), above_gnd_red) for k in range(len(points))]
 
-      true.tofile("/root/lidar/tmp/true.bin")
-      pred.tofile("/root/lidar/tmp/pred.bin")
+      trues[0].tofile("/root/lidar/tmp/true.bin")
+      preds[0].tofile("/root/lidar/tmp/pred.bin")
       loss = criterion(torch.log(output.clamp(min=1e-8)), proj_labels)
       print("output: ", output.clamp(min=1e-8).shape)
       print("proj_labels: ", proj_labels.shape)
