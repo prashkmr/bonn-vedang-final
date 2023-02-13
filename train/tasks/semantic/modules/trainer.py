@@ -26,7 +26,7 @@ from common.warmupLR import *
 from tasks.semantic.modules.segmentator import *
 from tasks.semantic.modules.ioueval import *
 
-# @numba.jit(nopython=True, parallel=True, cache=True)
+@numba.jit(nopython=True, parallel=True, cache=True)
 def new_cloud_bonnetal(points, labels, above_gnd: np.array):
   lidar_data = points[:, :2]  # neglecting the z co-ordinate
   height_data = points[:, 2] #+ 1.732
@@ -370,9 +370,12 @@ class Trainer():
       if self.gpu:
         proj_labels = proj_labels.cuda(non_blocking=True).long()
       
-      p_x = p_x[:, :npoints]
-      p_y = p_y[:, :npoints]
-      unproj_labels = unproj_labels[:, :npoints]
+      # p_x = p_x[:, :npoints]
+      p_x = torch.stack([p_x[k][:npoints[k]] for k in range(len(p_x))])
+      # p_y = p_y[:, :npoints]
+      p_y = torch.stack([p_y[k][:npoints[k]] for k in range(len(p_x))])
+      # unproj_labels = unproj_labels[:, :npoints]
+      unproj_labels = torch.stack([unproj_labels[k][:npoints[k]] for k in range(len(p_x))])
       # compute output
       output = model(in_vol, proj_mask)
       # import sys

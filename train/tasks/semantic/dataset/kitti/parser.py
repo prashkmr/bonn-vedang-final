@@ -266,8 +266,8 @@ class Parser():
                                        gt=self.gt)
 
     self.trainloader = torch.utils.data.DataLoader(self.train_dataset,
-                                                  #  batch_size=self.batch_size,
-                                                   batch_size=1,
+                                                   batch_size=self.batch_size,
+                                                  #  batch_size=1,
                                                    shuffle=self.shuffle_train,
                                                    num_workers=self.workers,
                                                    pin_memory=True,
