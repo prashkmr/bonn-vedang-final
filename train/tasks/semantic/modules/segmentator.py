@@ -2,7 +2,7 @@
 # This file is covered by the LICENSE file in the root of this project.
 
 import imp
-import torch
+import torch, os
 import torch.nn as nn
 import torch.nn.functional as F
 from tasks.semantic.postproc.CRF import CRF

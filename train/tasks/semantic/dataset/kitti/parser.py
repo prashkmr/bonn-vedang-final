@@ -219,6 +219,7 @@ class SemanticKitti(Dataset):
 class Parser():
   # standard conv, BN, relu
   def __init__(self,
+               args,
                root,              # directory for data
                train_sequences,   # sequences to train
                valid_sequences,   # sequences to validate.
@@ -232,7 +233,7 @@ class Parser():
                batch_size,        # batch size for train and val
                workers,           # threads to load data
                gt=True,           # get gt?
-               shuffle_train=True):  # shuffle training set?
+               shuffle_train=False):  # shuffle training set?
     super(Parser, self).__init__()
 
     # if I am training, get the dataset
@@ -264,11 +265,14 @@ class Parser():
                                        sensor=self.sensor,
                                        max_points=max_points,
                                        gt=self.gt)
-
-    self.trainloader = torch.utils.data.DataLoader(self.train_dataset,
-                                                  #  batch_size=self.batch_size,
-                                                   batch_size=1,
-                                                   shuffle=self.shuffle_train,
+    if torch.cuda.device_count() > 1:
+      self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.train_dataset)
+      self.trainloader = torch.utils.data.DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=False, num_workers=workers, sampler = self.train_sampler)
+    else:
+      self.trainloader = torch.utils.data.DataLoader(self.train_dataset,
+                                                   batch_size=self.batch_size,
+                                         
+                                                   shuffle=False,
                                                    num_workers=self.workers,
                                                    pin_memory=True,
                                                    drop_last=True)
@@ -335,7 +339,11 @@ class Parser():
     return scans
 
   def get_train_set(self):
-    return self.trainloader
+    if torch.cuda.device_count() > 1:
+      return self.trainloader, self.train_sampler
+    else:
+      return self.trainloader
+
 
   def get_valid_batch(self):
     scans = self.validiter.next()

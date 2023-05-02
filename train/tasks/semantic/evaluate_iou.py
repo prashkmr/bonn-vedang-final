@@ -121,6 +121,7 @@ if __name__ == '__main__':
 
   # get test set
   test_sequences = DATA["split"][FLAGS.split]
+  print('test Sequences', test_sequences)
 
   # get scan paths
   scan_names = []
@@ -164,6 +165,9 @@ if __name__ == '__main__':
   # check that I have the same number of files
   # print("labels: ", len(label_names))
   # print("predictions: ", len(pred_names))
+  print(len(label_names))
+  print(len(scan_names))
+  print(len(pred_names))
   assert(len(label_names) == len(scan_names) and
          len(label_names) == len(pred_names))
 

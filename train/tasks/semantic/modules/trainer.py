@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
 import torchvision.transforms as transforms
+import torch.distributed as dist
+import torch.utils.data.distributed
 import imp
 import yaml
 import time
@@ -18,40 +20,62 @@ import os
 import numpy as np
 from matplotlib import pyplot as plt
 import numba
-
+import time
 from common.logger import Logger
 from common.avgmeter import *
 from common.sync_batchnorm.batchnorm import convert_model
 from common.warmupLR import *
 from tasks.semantic.modules.segmentator import *
 from tasks.semantic.modules.ioueval import *
+from tasks.semantic.modules.SLAM_ERROR import *
 
-# @numba.jit(nopython=True, parallel=True, cache=True)
+# import lightning as L
+# fabric = L.Fabric(accelerator="cuda", devices=1, strategy="ddp")
+# fabric.launch()
+
+@numba.jit(nopython=True, parallel=True, cache=True)
 def new_cloud_bonnetal(points, labels, above_gnd: np.array):
+  # import time
+  # time.sleep(2)
   lidar_data = points[:, :2]  # neglecting the z co-ordinate
-  height_data = points[:, 2] #+ 1.732
-  points2 = np.zeros((points.shape[0],4), dtype=np.float32) - 1
+  #height_data = points[:, 2] #+ 1.732
+  points2 = np.zeros((points.shape[0],4), dtype=np.float32) - 1 
   # lidar_data -= grid_sub
   # lidar_data = lidar_data /voxel_size # multiplying by the resolution
   # lidar_data = np.floor(lidar_data)
   # lidar_data = lidar_data.astype(np.int32)
   # above_gnd = np.array([44, 48, 50, 51, 70, 71, 80, 81])
   N = lidar_data.shape[0] # Total number of points
+ 
   for i in numba.prange(N):
-    # x = lidar_data[i,0]
-    # y = lidar_data[i,1]
-    # z = height_data[i]
-    # if (0 < x < elevation_map.shape[0]) and (0 < y < elevation_map.shape[1]):
-    #     if z > elevation_map[x,y] + threshold:
-    #         points2[i,:] = points[i,:]
+      # x = lidar_data[i,0]
+      # y = lidar_data[i,1]
+      # z = height_data[i]
+      # if (0 < x < elevation_map.shape[0]) and (0 < y < elevation_map.shape[1]):
+      #     if z > elevation_map[x,y] + threshold:
+      #         points2[i,:] = points[i,:]
+      # print(labels[i])
+    # if i >= labels.shape[0] or i>=points.shape[0]:
+    #   break
+    # try:
     if labels[i] in above_gnd:
       points2[i,:] = points[i,:]
+    # except Exception as e:
+    #   print(e)
   points2 = points2[points2[:,0] != -1]
   return points2
 
+# @torch.jit.script
+def lidar_mask(points, labels, above_gnd):
+  # mask = torch.empty(points.shape[:], dtype=torch.bool)
+  mask = torch.full(points.shape[:0], False, dtype=torch.bool, device = labels.device)
+  import pdb; pdb.set_trace()
+  for i in above_gnd:
+    torch.logical_or(mask, torch.where(labels == i, True, False))
+  return mask
 
 class Trainer():
-  def __init__(self, ARCH, DATA, datadir, logdir, path=None):
+  def __init__(self, args, ARCH, DATA, datadir, logdir, path=None):
     # parameters
     self.ARCH = ARCH
     self.DATA = DATA
@@ -72,12 +96,44 @@ class Trainer():
                  "decoder_lr": 0,
                  "head_lr": 0,
                  "post_lr": 0}
-    self.above_gnd = np.array([50, 51, 70, 71, 80, 81]) 
+    # self.above_gnd = np.array([10,11,13,15,16,18,20,30,31,32,40,44,48,49,50,51,52,60,70,71,72,80,81,99]) 
+    # self.above_gnd = np.array([40,44,48,49,50,51,52,60,70,71,72,80,81,99]) 
 
     # get the data
+    import os
     parserPath = os.path.join(booger.TRAIN_PATH, "tasks", "semantic",  "dataset", self.DATA["name"], "parser.py")
     parserModule = imp.load_source("parserModule", parserPath)
-    self.parser = parserModule.Parser(root=self.datadir,
+
+    #Initializing for DDP
+    
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+      import os
+      
+      #-----------------------------------------------------------------------------------------
+      ngpus_per_node = torch.cuda.device_count()                                               #
+      """ This next line is the key to getting DistributedDataParallel working on SLURM:
+      SLURM_NODEID is 0 or 1 in this example, SLURM_LOCALID is the id of the 
+      current process inside a node and is also 0 or 1 in this example."""
+      local_rank = int(os.environ.get("SLURM_LOCALID")) 
+      rank = int(os.environ.get("SLURM_NODEID"))*ngpus_per_node + local_rank
+      current_device = local_rank
+      torch.cuda.set_device(current_device)
+      """ this block initializes a process group and initiate communications
+      between all processes running on all nodes """
+      print('From Rank: {}, ==> Initializing Process Group...'.format(rank))
+      #init the process group
+      dist.init_process_group(backend=args.dist_backend, init_method=args.init_method, world_size=args.world_size, rank=rank)
+      print("process group ready!")
+      print('From Rank: {}, ==> Making model..'.format(rank))
+
+
+                                                                                              #
+  #-------------------------------------------------------------------------------------------
+
+
+ 
+    self.parser = parserModule.Parser(args,
+                                      root=self.datadir,
                                       train_sequences=self.DATA["split"]["train"],
                                       valid_sequences=self.DATA["split"]["valid"],
                                       test_sequences=None,
@@ -90,7 +146,8 @@ class Trainer():
                                       batch_size=self.ARCH["train"]["batch_size"],
                                       workers=self.ARCH["train"]["workers"],
                                       gt=True,
-                                      shuffle_train=True)
+                                      shuffle_train=False
+                                      )
 
     # weights for loss (and bias)
     # weights for loss (and bias)
@@ -125,11 +182,23 @@ class Trainer():
       self.gpu = True
       self.n_gpus = 1
       self.model.cuda()
-    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+    
+
       print("Let's use", torch.cuda.device_count(), "GPUs!")
-      self.model = nn.DataParallel(self.model)   # spread in gpus
-      self.model = convert_model(self.model).cuda()  # sync batchnorm
-      self.model_single = self.model.module  # single model to get weight names
+      # self.model = nn.DataParallel(self.model)   # spread in gpus
+
+
+      #-------------------------------------------------------------------------------------------
+                                                                                                 # 
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:  
+      self.model = torch.nn.parallel.DistributedDataParallel(self.model, device_ids=[current_device])
+
+      print('From Rank: {}, ==> Preparing data..'.format(rank))                                  #
+      #-------------------------------------------------------------------------------------------
+
+      
+      #self.model = convert_model(self.model).cuda()  # sync batchnorm
+      #self.model_single = self.model.module  # single model to get weight names
       self.multi_gpu = True
       self.n_gpus = torch.cuda.device_count()
 
@@ -140,7 +209,11 @@ class Trainer():
       raise Exception('Loss not defined in config file')
     # loss as dataparallel too (more images in batch)
     if self.n_gpus > 1:
-      self.criterion = nn.DataParallel(self.criterion).cuda()  # spread in gpus
+      # self.criterion = nn.DataParallel(self.criterion).cuda()  # spread in gpus
+       #-------------------------------------------------------------------------------------------
+                                                                                                  #
+      self.criterion = self.criterion.cuda()  # spread in gpus                                                                                                    #
+      #-------------------------------------------------------------------------------------------
 
     # optimizer
     if self.ARCH["post"]["CRF"]["use"] and self.ARCH["post"]["CRF"]["train"]:
@@ -232,6 +305,7 @@ class Trainer():
     best_train_iou = 0.0
     best_val_iou = 0.0
 
+
     self.ignore_class = []
     for i, w in enumerate(self.loss_w):
       if w < 1e-10:
@@ -249,7 +323,16 @@ class Trainer():
 
       # train for 1 epoch
       print("Starting epoch!!")
-      acc, iou, loss, update_mean = self.train_epoch(train_loader=self.parser.get_train_set(),
+      if torch.cuda.device_count() >1 :
+        train_loader, train_sampler=self.parser.get_train_set()
+        train_sampler.set_epoch(epoch)
+      else:
+        train_loader =self.parser.get_train_set()
+      torch.cuda.empty_cache()
+
+
+      
+      acc, iou, loss, update_mean = self.train_epoch(train_loader,
                                                      model=self.model,
                                                      criterion=self.criterion,
                                                      optimizer=self.optimizer,
@@ -300,14 +383,14 @@ class Trainer():
         print("*" * 80)
 
         # save to log
-        Trainer.save_to_log(logdir=self.log,
-                            logger=self.tb_logger,
-                            info=self.info,
-                            epoch=epoch,
-                            w_summary=self.ARCH["train"]["save_summary"],
-                            model=self.model_single,
-                            img_summary=self.ARCH["train"]["save_scans"],
-                            imgs=rand_img)
+        # Trainer.save_to_log(logdir=self.log,
+        #                     logger=self.tb_logger,
+        #                     info=self.info,
+        #                     epoch=epoch,
+        #                     w_summary=self.ARCH["train"]["save_summary"],
+        #                     model=self.model_single,
+        #                     img_summary=self.ARCH["train"]["save_scans"],
+        #                     imgs=rand_img)
 
     print('Finished Training')
 
@@ -344,6 +427,7 @@ class Trainer():
   #     return pts2
 
   def train_epoch(self, train_loader, model, criterion, optimizer, epoch, evaluator, scheduler, color_fn, report=10, show_scans=False):
+    start = time.time()
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -359,8 +443,14 @@ class Trainer():
     model.train()
 
     end = time.time()
+    counter = 0
+    
+    #--------------------------------------------------------------------------------------------------------------------
+                                                                                                                            #
     for i, (in_vol, proj_mask, proj_labels, unproj_labels, path_seq, path_name, p_x, p_y, _, _, _, unproj_xyz, _, unproj_remissions, npoints) in enumerate(train_loader):
         # measure data loading time
+      print("Batch :", i)
+    
       data_time.update(time.time() - end)
       if not self.multi_gpu and self.gpu:
         in_vol = in_vol.cuda()
@@ -368,11 +458,14 @@ class Trainer():
         p_x = p_x.cuda()
         p_y = p_y.cuda()
       if self.gpu:
+        # proj_labels = proj_labels.cuda(non_blocking=True).long()
         proj_labels = proj_labels.cuda(non_blocking=True).long()
       
-      p_x = p_x[:, :npoints]
-      p_y = p_y[:, :npoints]
-      unproj_labels = unproj_labels[:, :npoints]
+
+      # p_x = torch.stack([p_x[k][:npoints[k]] for k in range(len(p_x))])
+      # p_y = p_y[:, :npoints]
+      # p_y = torch.stack([p_y[k][:npoints[k]] for k in range(len(p_x))])
+      # unproj_labels = unproj_labels[:, :npoints]
       # compute output
       output = model(in_vol, proj_mask)
       # import sys
@@ -388,39 +481,124 @@ class Trainer():
       # print("unproj_argmax: ", unproj_argmax.shape)
       # ################## debug for vedang ##################
 
-      unproj_argmax = torch.stack([output[k].argmax(dim=0)[p_y[k]][p_x[k]] for k in range(len(output))])
+      # unproj_argmax = torch.stack([output[k].argmax(dim=0)[p_y[k]][p_x[k]] for k in range(len(output))])
+      # unproj_argmax = torch.stack([output[k].argmax(dim=0)[p_y[k][:npoints[k]],p_x[k][:npoints[k]]] for k in range(len(output))])
+      unproj_argmax = torch.stack([output[k].argmax(dim=0)[p_y[k],p_x[k]] for k in range(len(output))])
+      # unproj_labels = torch.stack([unproj_labels[k][:npoints[k]] for k in range(len(unproj_labels))])
+      # unproj_labels = torch.stack([unproj_labels[k] for k in range(len(unproj_labels))])
       pred_np = unproj_argmax.cpu().numpy()
 
       pred_np = pred_np.reshape((len(output),-1)).astype(np.int32)
-
+      
       # map to original label
       # print("pred_np: ", pred_np.shape)
       # pred_np = to_orig_fn(pred_np)
-      above_gnd_red = np.array([13, 14, 15, 16, 18, 19])
-
-      points = torch.cat([unproj_xyz[:, :pred_np.shape[1], :], unproj_remissions[:, :pred_np.shape[1]].unsqueeze(2)], dim=2).cpu().numpy()
-      # print("points: ", points)
+      
+      above_gnd_red = np.array([10,11,13,14,15,16,17,18,19]) 
+      # points = torch.cat([unproj_xyz[:, :pred_np.shape[1], :], unproj_remissions[:, :pred_np.shape[1]].unsqueeze(2)], dim=2).cpu().numpy()
+      points = torch.cat([unproj_xyz[:, :, :], unproj_remissions[:, :].unsqueeze(2)], dim=2).cpu().numpy()
+      # print("points: ", points.shape)
+      # print("points: ", points[0, :npoints[0]].shape)
+      # print("unproj_labels :", unproj_labels[0, :npoints[0]].shape)
+      # print("proj_labels :", proj_labels.shape)
+      # print("pred_np: ", pred_np[0, :npoints[0]].shape)
+      # print("unproj_argmax :", unproj_argmax.shape)
+      # print("unproj_xyz: ", unproj_xyz.shape)
+      # print("unproj_remissions: ", unproj_remissions.shape)
+      # print("npoints: ", npoints)
+      # print("output: ", output.shape)
+      # print("p_x: ", p_x)
+      # print("p_y: ", p_y)
       # print("unproj: ", unproj_labels[0].cpu().numpy().copy())
       # print()
-      trues = [new_cloud_bonnetal(points[k].copy(), unproj_labels[k].cpu().numpy().copy(), above_gnd_red) for k in range(len(points))]
-      preds = [new_cloud_bonnetal(points[k].copy(), pred_np[k].copy(), above_gnd_red) for k in range(len(points))]
-
-      trues[0].tofile("/root/lidar/tmp/true.bin")
-      preds[0].tofile("/root/lidar/tmp/pred.bin")
+      # print(len(unproj_labels[0]))   1269496
+      # exit(0)
+      # print("Shape of labels array:   ", len(unproj_labels),  len(pred_np) )
+      # trues = [new_cloud_bonnetal(points[k].copy(), unproj_labels[k].cpu().numpy().copy(), above_gnd_red) for k in range(len(points))]
+      # trues = [new_cloud_bonnetal(points[k, :npoints[k]].copy(), unproj_labels[k,:npoints[k]].cpu().numpy().copy(), above_gnd_red)[:,:3] for k in range(len(points))]
+      # preds = [new_cloud_bonnetal(points[k, :npoints[k]].copy(), pred_np[k, :npoints[k]].copy(), above_gnd_red)[:,:3] for k in range(len(points))]
+      # print((proj_labels).is_cuda, (torch.log(output.clamp(min=1e-8))).is_cuda )
       loss = criterion(torch.log(output.clamp(min=1e-8)), proj_labels)
-      print("output: ", output.clamp(min=1e-8).shape)
-      print("proj_labels: ", proj_labels.shape)
+      # print(output.shape)      #torch.Size([2, 20, 64, 2048])
+      # print(proj_labels.shape) #torch.Size([2, 64, 2048])
+      # print(unproj_labels.shape, pred_np.shape) torch.Size([2, 150000]) (2, 150000)
+      # exit(0)
+      # loss 
+      # for k in range(len(trues)):
+      #   # trues[0].tofile(f"./log/outputs/true_{counter%30}.bin")
+      #   # preds[0].tofile(f"./log/outputs/pred_{counter%30}.bin")
+      #   print(trues[k].shape, preds[k].shape)
+      #   counter+=1
+      # # print(trues.shape, preds.shape)
+      # exit(0)
+        # import os
+        # os._exit(0)
+      # print("points: ", points[0, :npoints[0]].shape)
+      # print("unproj_labels :", unproj_labels[0, :npoints[0]].shape)
+      # print("proj_labels :", proj_labels.shape)
+      # print("pred_np: ", pred_np[0, :npoints[0]].shape)
+      # print("unproj_argmax :", unproj_argmax.shape)
+      # print("unproj_xyz: ", unproj_xyz.shape)
+      # print("unproj_remissions: ", unproj_remissions.shape)
+      # print("npoints: ", npoints)
+      # print("output: ", output.shape)
+      # print("p_x: ", p_x)
+      # print("p_y: ", p_y)
+      # trues[0].tofile("/root/lidar/tmp/true.bin")
+      # preds[0].tofile("/root/lidar/tmp/pred.bin")
+      warmup = self.ARCH['train']['warmup']
+      # print("Here")
+      #------------------------------------------------------------------------------------------------------------------
+      if (epoch >= 0):
+        
+        # trues = [torch.Tensor(new_cloud_bonnetal(points[k, :npoints[k]].copy(), unproj_labels[k,:npoints[k]].cpu().numpy().copy(), above_gnd_red)[:,:3]).cuda() for k in range(len(points))]
+        # preds = [torch.Tensor(new_cloud_bonnetal(points[k, :npoints[k]].copy(), pred_np[k, :npoints[k]].copy(), above_gnd_red)[:,:3]).cuda() for k in range(len(points))]    
+        trues = [torch.Tensor(new_cloud_bonnetal(points[k, :npoints[k]].copy(), unproj_labels[k,:npoints[k]].cpu().numpy().copy(), above_gnd_red)[:,:3]) for k in range(len(points))]
+        import pdb; pdb.set_trace()
+        trues0 = torch.masked_select(
+          torch.cat([unproj_xyz[:, :, :], unproj_remissions[:, :].unsqueeze(2)], dim=2)[0,:npoints[0]].to(self.device),
+          lidar_mask(torch.cat([unproj_xyz[:, :, :], unproj_remissions[:, :].unsqueeze(2)], dim=2)[0,:npoints[0]],
+                     unproj_labels[0,:npoints[0]].to(self.device),
+                     torch.tensor(above_gnd_red, device = self.device)))
+        preds = [torch.Tensor(new_cloud_bonnetal(points[k, :npoints[k]].copy(), pred_np[k, :npoints[k]].copy(), above_gnd_red)[:,:3]) for k in range(len(points))]
+        
+        for k in range(len(trues)):
+          print(trues[k].shape, preds[k].shape)
+          print(type(trues[k]), type(preds[k]))
+        # print(np.unique(unproj_labels))
+        # print(np.unique(pred_np))
+        # exit(0)
+        slam_err        = Slam_error(trues, preds)
+        print(slam_err)
+        slam_err.requires_grad = True
+        # slam_err.device = 'cuda'
+        print(type(slam_err))
+        print(slam_err.requires_grad)
+        loss = slam_err
+        # slam_err.requires_grad()
+        
+        #loss            = slam_err
+        print('SLAM Error :', slam_err)
+        # loss        = (slam_err)
+      #----------------------loss ----------------------------------------------------------------------------------------------
+
+
+      
+      #print("output: ", output.clamp(min=1e-8).shape)
+      #print("proj_labels: ", proj_labels.shape)
       # compute gradient and do SGD step
       optimizer.zero_grad()
       if self.n_gpus > 1:
-        idx = torch.ones(self.n_gpus).cuda()
-        loss.backward(idx)
+        # idx = torch.ones(self.n_gpus).cuda()
+        # loss.backward(idx)
+        loss.backward()
       else:
         loss.backward()
       optimizer.step()
 
       # measure accuracy and record loss
       loss = loss.mean()
+      
       with torch.no_grad():
         evaluator.reset()
         argmax = output.argmax(dim=1)
@@ -451,6 +629,9 @@ class Trainer():
       update_std = update_ratios.std()
       update_ratio_meter.update(update_mean)  # over the epoch
 
+      if self.gpu:
+        torch.cuda.empty_cache()
+
       if show_scans:
         # get the first scan in batch and project points
         mask_np = proj_mask[0].cpu().numpy()
@@ -476,6 +657,10 @@ class Trainer():
 
       # step scheduler
       scheduler.step()
+      # print("Batch :", i)
+      print("Time is ", time.time()-start)
+    print(time.time()-start)
+    # exit(0)
 
     return acc.avg, iou.avg, losses.avg, update_ratio_meter.avg
 

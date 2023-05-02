@@ -47,6 +47,13 @@ if __name__ == '__main__':
       default=None,
       help='Directory to get the pretrained model. If not passed, do from scratch!'
   )
+
+  parser.add_argument('--init_method', default='', type=str, help='')
+  parser.add_argument('--dist-backend', default='gloo', type=str, help='')
+  parser.add_argument('--world_size', default=1, type=int, help='')
+  parser.add_argument('--distributed', action='store_true', help='')
+  parser.add_argument('--num_workers', default=8, type=int, help='')
+
   FLAGS, unparsed = parser.parse_known_args()
 
   # print summary of what we will do
@@ -88,7 +95,7 @@ if __name__ == '__main__':
   except Exception as e:
     print(e)
     print("Error creating log directory. Check permissions!")
-    quit()
+    # quit()
 
   # does model folder exist?
   if FLAGS.pretrained is not None:
@@ -108,8 +115,8 @@ if __name__ == '__main__':
   except Exception as e:
     print(e)
     print("Error copying files, check permissions. Exiting...")
-    quit()
+    # quit()
 
   # create trainer and start the training
-  trainer = Trainer(ARCH, DATA, FLAGS.dataset, FLAGS.log, FLAGS.pretrained)
+  trainer = Trainer(FLAGS, ARCH, DATA, FLAGS.dataset, FLAGS.log, FLAGS.pretrained)
   trainer.train()

@@ -1,0 +1,64 @@
+----------
+INTERFACE:
+dataset /home/eqdong/scratch/diff-lidar-slam-dslr*/seg/kitti-data/dataset/
+arch_cfg config/arch/darknet53.yaml
+data_cfg config/labels/semantic-kitti.yaml
+log log/test
+pretrained pre_trained_models/darknet53
+----------
+
+Commit hash (training version):  b'dcd7ead'
+----------
+
+Opening arch config file config/arch/darknet53.yaml
+Opening data config file config/labels/semantic-kitti.yaml
+model folder exists! Using model from pre_trained_models/darknet53
+Copying files to log/test for further reference.
+Sequences folder exists! Using sequences from /home/eqdong/scratch/diff-lidar-slam-dslr*/seg/kitti-data/dataset/sequences
+parsing seq 00
+parsing seq 01
+parsing seq 02
+parsing seq 03
+parsing seq 04
+parsing seq 05
+parsing seq 06
+parsing seq 07
+parsing seq 09
+parsing seq 10
+Using 19130 scans from sequences [0, 1, 2, 3, 4, 5, 6, 7, 9, 10]
+Sequences folder exists! Using sequences from /home/eqdong/scratch/diff-lidar-slam-dslr*/seg/kitti-data/dataset/sequences
+parsing seq 08
+Using 4071 scans from sequences [8]
+Loss weights from content:  tensor([  0.0000,  22.9317, 857.5627, 715.1100, 315.9618, 356.2452, 747.6170,
+        887.2239, 963.8915,   5.0051,  63.6247,   6.9002, 203.8796,   7.4802,
+         13.6315,   3.7339, 142.1462,  12.6355, 259.3699, 618.9667])
+Using DarknetNet53 Backbone
+Depth of backbone input =  5
+Original OS:  32
+New OS:  32
+Strides:  [2, 2, 2, 2, 2]
+Decoder original OS:  32
+Decoder new OS:  32
+Decoder strides:  [2, 2, 2, 2, 2]
+Total number of parameters:  50377364
+Total number of parameters requires_grad:  50377364
+Param encoder  40585504
+Param decoder  9786080
+Param head  5780
+Successfully loaded model backbone weights
+Successfully loaded model decoder weights
+Successfully loaded model head weights
+Training in device:  cuda
+Let's use 1 GPUs!
+Ignoring class  0  in IoU evaluation
+[IOU EVAL] IGNORE:  tensor([0])
+[IOU EVAL] INCLUDE:  tensor([ 1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+        19])
+Starting epoch!!
+Batch : 0
+torch.Size([80179, 3]) torch.Size([85385, 3])
+torch.Size([81245, 3]) torch.Size([86223, 3])
+1
+2
+3
+4

@@ -77,22 +77,16 @@ if __name__ == '__main__':
       print("train", seq)
       os.makedirs(os.path.join(FLAGS.log, "sequences", seq))
       os.makedirs(os.path.join(FLAGS.log, "sequences", seq, "predictions"))
-      os.makedirs(os.path.join(FLAGS.log, "sequences", seq, "true_points"))
-      os.makedirs(os.path.join(FLAGS.log, "sequences", seq, "pred_points"))      
     for seq in DATA["split"]["valid"]:
       seq = '{0:02d}'.format(int(seq))
       print("valid", seq)
       os.makedirs(os.path.join(FLAGS.log, "sequences", seq))
       os.makedirs(os.path.join(FLAGS.log, "sequences", seq, "predictions"))
-      os.makedirs(os.path.join(FLAGS.log, "sequences", seq, "true_points"))
-      os.makedirs(os.path.join(FLAGS.log, "sequences", seq, "pred_points"))      
     for seq in DATA["split"]["test"]:
       seq = '{0:02d}'.format(int(seq))
       print("test", seq)
       os.makedirs(os.path.join(FLAGS.log, "sequences", seq))
       os.makedirs(os.path.join(FLAGS.log, "sequences", seq, "predictions"))
-      os.makedirs(os.path.join(FLAGS.log, "sequences", seq, "true_points"))
-      os.makedirs(os.path.join(FLAGS.log, "sequences", seq, "pred_points"))      
   except Exception as e:
     print(e)
     print("Error creating log directory. Check permissions!")
@@ -111,5 +105,5 @@ if __name__ == '__main__':
     quit()
 
   # create user and infer dataset
-  user = User(ARCH, DATA, FLAGS.dataset, FLAGS.log, FLAGS.model)
+  user = User(FLAGS, ARCH, DATA, FLAGS.dataset, FLAGS.log, FLAGS.model)
   user.infer()
