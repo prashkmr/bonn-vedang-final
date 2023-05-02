@@ -5,7 +5,7 @@ train/tasks/semantic/pretrained-baseline-validation/
 train/tasks/semantic/pre_trained_models/
 bonnetal_vedang/
 # Byte-compiled / optimized / DLL files
-*/__pycache__/*
+
 __pycache__/
 *.py[cod]
 *$py.class
