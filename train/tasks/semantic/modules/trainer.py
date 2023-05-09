@@ -66,13 +66,26 @@ def new_cloud_bonnetal(points, labels, above_gnd: np.array):
   return points2
 
 # @torch.jit.script
-def lidar_mask(points, labels, above_gnd):
+def lidar_mask(labels, above_gnd):
   # mask = torch.empty(points.shape[:], dtype=torch.bool)
-  mask = torch.full(points.shape[:0], False, dtype=torch.bool, device = labels.device)
-  import pdb; pdb.set_trace()
+  mask = torch.full(labels.shape[:0], False, dtype=torch.bool, device = labels.device)
+  # import pdb; pdb.set_trace()
   for i in above_gnd:
-    torch.logical_or(mask, torch.where(labels == i, True, False))
+    mask = torch.logical_or(mask, torch.where(labels == i, True, False))
   return mask
+  
+
+def new_lidar_points(points, labels, above_gnd):
+  device = points.device
+  # import pdb; pdb.set_trace()
+  return points [lidar_mask(
+                     labels.to(device),
+                     torch.tensor(above_gnd, device = device)
+                     )
+  ]
+
+
+  
 
 class Trainer():
   def __init__(self, args, ARCH, DATA, datadir, logdir, path=None):
@@ -489,7 +502,7 @@ class Trainer():
       pred_np = unproj_argmax.cpu().numpy()
 
       pred_np = pred_np.reshape((len(output),-1)).astype(np.int32)
-      
+      pred_tens = unproj_argmax.reshape((len(output),-1)).type(torch.int32)
       # map to original label
       # print("pred_np: ", pred_np.shape)
       # pred_np = to_orig_fn(pred_np)
@@ -497,6 +510,8 @@ class Trainer():
       above_gnd_red = np.array([10,11,13,14,15,16,17,18,19]) 
       # points = torch.cat([unproj_xyz[:, :pred_np.shape[1], :], unproj_remissions[:, :pred_np.shape[1]].unsqueeze(2)], dim=2).cpu().numpy()
       points = torch.cat([unproj_xyz[:, :, :], unproj_remissions[:, :].unsqueeze(2)], dim=2).cpu().numpy()
+      
+      points2 = torch.cat([unproj_xyz[:, :, :], unproj_remissions[:, :].unsqueeze(2)], dim=2)
       # print("points: ", points.shape)
       # print("points: ", points[0, :npoints[0]].shape)
       # print("unproj_labels :", unproj_labels[0, :npoints[0]].shape)
@@ -550,17 +565,31 @@ class Trainer():
       # print("Here")
       #------------------------------------------------------------------------------------------------------------------
       if (epoch >= 0):
-        
+        # prasha
         # trues = [torch.Tensor(new_cloud_bonnetal(points[k, :npoints[k]].copy(), unproj_labels[k,:npoints[k]].cpu().numpy().copy(), above_gnd_red)[:,:3]).cuda() for k in range(len(points))]
         # preds = [torch.Tensor(new_cloud_bonnetal(points[k, :npoints[k]].copy(), pred_np[k, :npoints[k]].copy(), above_gnd_red)[:,:3]).cuda() for k in range(len(points))]    
-        trues = [torch.Tensor(new_cloud_bonnetal(points[k, :npoints[k]].copy(), unproj_labels[k,:npoints[k]].cpu().numpy().copy(), above_gnd_red)[:,:3]) for k in range(len(points))]
+        # trues_ = [torch.Tensor(new_cloud_bonnetal(points[k, :npoints[k]].copy(), unproj_labels[k,:npoints[k]].cpu().numpy().copy(), above_gnd_red)[:,:3]) for k in range(len(points))]
+        # import pdb; pdb.set_trace()
+        trues = [
+        
+          new_lidar_points(
+          points = points2[k, :npoints[k]],
+          labels = unproj_labels[k,:npoints[k]],
+          above_gnd = above_gnd_red,
+          )[:,:3]
+          for k in range(len(points))
+        ]
+        
+        preds = [
+          new_lidar_points(
+          points = points2[k, :npoints[k]],
+          labels = pred_tens[k,:npoints[k]],
+          above_gnd = above_gnd_red,
+          )[:,:3]
+          for k in range(len(points))
+        ]
         import pdb; pdb.set_trace()
-        trues0 = torch.masked_select(
-          torch.cat([unproj_xyz[:, :, :], unproj_remissions[:, :].unsqueeze(2)], dim=2)[0,:npoints[0]].to(self.device),
-          lidar_mask(torch.cat([unproj_xyz[:, :, :], unproj_remissions[:, :].unsqueeze(2)], dim=2)[0,:npoints[0]],
-                     unproj_labels[0,:npoints[0]].to(self.device),
-                     torch.tensor(above_gnd_red, device = self.device)))
-        preds = [torch.Tensor(new_cloud_bonnetal(points[k, :npoints[k]].copy(), pred_np[k, :npoints[k]].copy(), above_gnd_red)[:,:3]) for k in range(len(points))]
+        # preds = [torch.Tensor(new_cloud_bonnetal(points[k, :npoints[k]].copy(), pred_np[k, :npoints[k]].copy(), above_gnd_red)[:,:3]) for k in range(len(points))]
         
         for k in range(len(trues)):
           print(trues[k].shape, preds[k].shape)
